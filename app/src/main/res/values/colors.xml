@@ -1,0 +1,6 @@
+<resources>
+    <color name="status_bar_color">#000000</color>
+    <color name="navigation_bar_color">#000000</color>
+    <color name="main_background_color">#F2F2F2</color>
+    <color name="app_background">#F2F2F2</color>
+</resources>
