@@ -1,100 +1,84 @@
-#include <jni.h>
-#include <string>
-#include <android/log.h>
+name: Android Debug Build
 
-// MuPDF core header
-extern "C" {
-#include "mupdf/fitz.h"
-}
+on:
+  push:
+    branches:
+      - main
+  pull_request:
 
-#define LOG_TAG "PdfNative"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-// Global context
-static fz_context *ctx = nullptr;
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
 
-extern "C"
-JNIEXPORT void JNICALL
-Java_com_arvinapp_pdfreader_PdfNative_initMuPDF(JNIEnv *env, jobject thiz) {
-    if (!ctx) {
-        ctx = fz_new_context(nullptr, nullptr, FZ_STORE_UNLIMITED);
-        if (!ctx) {
-            LOGI("Failed to create MuPDF context!");
-        } else {
-            LOGI("MuPDF context initialized.");
-        }
-    }
-}
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          cmake-version: 3.22.1
 
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_arvinapp_pdfreader_PdfNative_getTitle(JNIEnv *env, jobject thiz, jstring jpath) {
-    if (!ctx) {
-        return env->NewStringUTF("MuPDF not initialized");
-    }
+      - name: Create project structure and download MuPDF
+        run: |
+          mkdir -p app/src/main/cpp
+          
+          # MuPDF kaynak kodunu indir ve çıkar
+          wget https://mupdf.com/downloads/archive/mupdf-1.24.0-source.tar.gz
+          tar -xvf mupdf-1.24.0-source.tar.gz
+          mv mupdf-1.24.0-source app/src/main/cpp/mupdf_source
 
-    const char *path = env->GetStringUTFChars(jpath, nullptr);
+          # CMakeLists.txt dosyasını oluştur
+          cat << EOF > app/src/main/cpp/CMakeLists.txt
+          cmake_minimum_required(VERSION 3.18.1)
+          
+          set(CMAKE_VERBOSE_MAKEFILE ON)
 
-    fz_document *doc = nullptr;
-    fz_try(ctx) {
-        doc = fz_open_document(ctx, path);
-    } fz_catch(ctx) {
-        env->ReleaseStringUTFChars(jpath, path);
-        return env->NewStringUTF("Error opening PDF");
-    }
+          add_library(
+              mupdf_lib
+              STATIC
+              src/main/cpp/mupdf_source/source/mu_lib.c
+              src/main/cpp/mupdf_source/source/fitz/fitz.c
+              src/main/cpp/mupdf_source/source/pdf/pdf.c
+              src/main/cpp/mupdf_source/source/xps/xps.c
+          )
+          target_include_directories(
+              mupdf_lib
+              PUBLIC
+              src/main/cpp/mupdf_source/include
+          )
+          target_link_libraries(
+              mupdf_lib
+              log
+          )
+          
+          add_library(
+              pdfnative
+              SHARED
+              src/main/cpp/PdfNative.cpp
+          )
+          find_library(log-lib log)
+          target_link_libraries(
+              pdfnative
+              mupdf_lib
+          )
+          EOF
 
-    char title[256] = {0};
-    fz_lookup_metadata(ctx, doc, FZ_META_INFO_TITLE, title, sizeof(title));
-
-    fz_drop_document(ctx, doc);
-    env->ReleaseStringUTFChars(jpath, path);
-
-    if (strlen(title) == 0) {
-        return env->NewStringUTF("No title");
-    }
-
-    return env->NewStringUTF(title);
-}
-
-extern "C"
-JNIEXPORT jobjectArray JNICALL
-Java_com_arvinapp_pdfreader_PdfNative_getPageSize(JNIEnv *env, jobject thiz, jstring jpath, jint page_num) {
-    if (!ctx) {
-        return nullptr;
-    }
-
-    const char *path = env->GetStringUTFChars(jpath, nullptr);
-    fz_document *doc = nullptr;
-    fz_page *page = nullptr;
-    jobjectArray result = nullptr;
-
-    fz_try(ctx) {
-        doc = fz_open_document(ctx, path);
-        int page_count = fz_count_pages(ctx, doc);
-        if (page_num < 0 || page_num >= page_count) {
-            fz_throw(ctx, FZ_ERROR_GENERIC, "Page out of range");
-        }
-        page = fz_load_page(ctx, doc, page_num);
-        fz_rect rect;
-        fz_bound_page(ctx, page, &rect);
-
-        result = env->NewObjectArray(2, env->FindClass("java/lang/Float"), nullptr);
-        jclass floatClass = env->FindClass("java/lang/Float");
-        jmethodID floatInit = env->GetMethodID(floatClass, "<init>", "(F)V");
-
-        jobject w = env->NewObject(floatClass, floatInit, (jfloat)rect.x1);
-        jobject h = env->NewObject(floatClass, floatInit, (jfloat)rect.y1);
-
-        env->SetObjectArrayElement(result, 0, w);
-        env->SetObjectArrayElement(result, 1, h);
-
-        fz_drop_page(ctx, page);
-        fz_drop_document(ctx, doc);
-    } fz_always(ctx) {
-        env->ReleaseStringUTFChars(jpath, path);
-    } fz_catch(ctx) {
-        LOGI("Error getting page size");
-    }
-
-    return result;
-}
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+      
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFly-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
