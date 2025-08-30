@@ -29,10 +29,14 @@ jobs:
           build-tools: 34.0.0
           cmake-version: 3.22.1
 
-      - name: Create CMakeLists.txt and MuPDF Source
+      - name: Create project structure and download MuPDF
         run: |
-          # MuPDF kaynak kodunu klonla
-          git clone https://git.ghostscript.com/mupdf.git app/src/main/cpp/mupdf_source
+          mkdir -p app/src/main/cpp
+          
+          # MuPDF kaynak kodunu indir ve çıkar
+          wget https://mupdf.com/downloads/archive/mupdf-1.24.0-source.tar.gz
+          tar -xvf mupdf-1.24.0-source.tar.gz
+          mv mupdf-1.24.0-source app/src/main/cpp/mupdf_source
 
           # CMakeLists.txt dosyasını oluştur
           cat << EOF > app/src/main/cpp/CMakeLists.txt
