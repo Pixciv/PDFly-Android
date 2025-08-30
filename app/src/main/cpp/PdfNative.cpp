@@ -1,84 +1,143 @@
-name: Android Debug Build
+#include <jni.h>
+#include <android/log.h>
+#include <string>
+#include <cstring>
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
+// MuPDF header'ları
+extern "C" {
+    #include "mupdf_source/include/mupdf/fitz.h"
+    #include "mupdf_source/include/mupdf/pdf.h"
+}
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+#define LOG_TAG "PDFNative"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+// Global context
+fz_context* ctx = nullptr;
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-      
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v2
-        with:
-          api-level: 34
-          build-tools: 34.0.0
-          cmake-version: 3.22.1
+extern "C" JNIEXPORT void JNICALL
+Java_com_arvinapp_pdfreader_PdfNative_initMuPDF(JNIEnv* env, jobject /* this */) {
+    try {
+        if (ctx == nullptr) {
+            ctx = fz_new_context(nullptr, nullptr, FZ_STORE_UNLIMITED);
+            if (ctx) {
+                fz_register_document_handlers(ctx);
+                LOGI("MuPDF initialized successfully");
+            } else {
+                LOGE("Failed to initialize MuPDF context");
+            }
+        }
+    } catch (const std::exception& e) {
+        LOGE("Exception in initMuPDF: %s", e.what());
+    }
+}
 
-      - name: Create project structure and download MuPDF
-        run: |
-          mkdir -p app/src/main/cpp
-          
-          # MuPDF kaynak kodunu indir ve çıkar
-          wget https://mupdf.com/downloads/archive/mupdf-1.24.0-source.tar.gz
-          tar -xvf mupdf-1.24.0-source.tar.gz
-          mv mupdf-1.24.0-source app/src/main/cpp/mupdf_source
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_arvinapp_pdfreader_PdfNative_getTitle(JNIEnv* env, jobject /* this */, jstring path) {
+    if (ctx == nullptr) {
+        return env->NewStringUTF("Error: MuPDF not initialized");
+    }
 
-          # CMakeLists.txt dosyasını oluştur
-          cat << EOF > app/src/main/cpp/CMakeLists.txt
-          cmake_minimum_required(VERSION 3.18.1)
-          
-          set(CMAKE_VERBOSE_MAKEFILE ON)
+    const char* filePath = env->GetStringUTFChars(path, nullptr);
+    if (!filePath) {
+        return env->NewStringUTF("Error: Invalid file path");
+    }
 
-          add_library(
-              mupdf_lib
-              STATIC
-              src/main/cpp/mupdf_source/source/mu_lib.c
-              src/main/cpp/mupdf_source/source/fitz/fitz.c
-              src/main/cpp/mupdf_source/source/pdf/pdf.c
-              src/main/cpp/mupdf_source/source/xps/xps.c
-          )
-          target_include_directories(
-              mupdf_lib
-              PUBLIC
-              src/main/cpp/mupdf_source/include
-          )
-          target_link_libraries(
-              mupdf_lib
-              log
-          )
-          
-          add_library(
-              pdfnative
-              SHARED
-              src/main/cpp/PdfNative.cpp
-          )
-          find_library(log-lib log)
-          target_link_libraries(
-              pdfnative
-              mupdf_lib
-          )
-          EOF
+    try {
+        fz_document* doc = fz_open_document(ctx, filePath);
+        if (!doc) {
+            env->ReleaseStringUTFChars(path, filePath);
+            return env->NewStringUTF("Error: Cannot open document");
+        }
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
-      
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: PDFly-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+        const char* title = fz_get_metadata(ctx, doc, FZ_META_INFO_TITLE);
+        std::string result;
+        
+        if (title && strlen(title) > 0) {
+            result = title;
+        } else {
+            // Dosya adından title oluştur
+            const char* lastSlash = strrchr(filePath, '/');
+            const char* fileName = lastSlash ? lastSlash + 1 : filePath;
+            result = fileName;
+        }
+
+        fz_drop_document(ctx, doc);
+        env->ReleaseStringUTFChars(path, filePath);
+
+        return env->NewStringUTF(result.c_str());
+
+    } catch (const std::exception& e) {
+        LOGE("Exception in getTitle: %s", e.what());
+        env->ReleaseStringUTFChars(path, filePath);
+        return env->NewStringUTF("Error: Exception occurred");
+    }
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_arvinapp_pdfreader_PdfNative_getPageSize(JNIEnv* env, jobject /* this */, 
+                                                 jstring path, jint pageNum) {
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+
+    const char* filePath = env->GetStringUTFChars(path, nullptr);
+    if (!filePath) {
+        return nullptr;
+    }
+
+    try {
+        fz_document* doc = fz_open_document(ctx, filePath);
+        if (!doc) {
+            env->ReleaseStringUTFChars(path, filePath);
+            return nullptr;
+        }
+
+        int totalPages = fz_count_pages(ctx, doc);
+        if (pageNum < 0 || pageNum >= totalPages) {
+            fz_drop_document(ctx, doc);
+            env->ReleaseStringUTFChars(path, filePath);
+            return nullptr;
+        }
+
+        fz_page* page = fz_load_page(ctx, doc, pageNum);
+        fz_rect bounds;
+        fz_bound_page(ctx, page, &bounds);
+
+        jfloatArray result = env->NewFloatArray(2);
+        jfloat dimensions[2] = {bounds.x1 - bounds.x0, bounds.y1 - bounds.y0};
+        env->SetFloatArrayRegion(result, 0, 2, dimensions);
+
+        fz_drop_page(ctx, page);
+        fz_drop_document(ctx, doc);
+        env->ReleaseStringUTFChars(path, filePath);
+
+        return result;
+
+    } catch (const std::exception& e) {
+        LOGE("Exception in getPageSize: %s", e.what());
+        env->ReleaseStringUTFChars(path, filePath);
+        return nullptr;
+    }
+}
+
+// JNI_OnLoad fonksiyonu
+JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    JNIEnv* env;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+    
+    LOGI("PDFNative library loaded successfully");
+    return JNI_VERSION_1_6;
+}
+
+// JNI_OnUnload fonksiyonu
+JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved) {
+    if (ctx) {
+        fz_drop_context(ctx);
+        ctx = nullptr;
+        LOGI("MuPDF context cleaned up");
+    }
+}
