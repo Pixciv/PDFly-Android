@@ -73,7 +73,7 @@ jobs:
               mupdf_lib
           )
           EOF
-      
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
