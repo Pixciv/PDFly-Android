@@ -13,6 +13,17 @@ android {
         targetSdk = 35
         versionCode = 6
         versionName = "4.3"
+
+        // Native kod için NDK ayarı
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
     }
 
     buildTypes {
@@ -32,6 +43,14 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    // CMake dosyasını bağlama
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
