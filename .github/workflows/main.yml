@@ -1,0 +1,122 @@
+name: Android Debug Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          cmake-version: 3.22.1
+      
+      - name: Install NDK
+        run: |
+          wget -c https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+          unzip -o -q android-ndk-r25b-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25b" >> $GITHUB_ENV
+
+      - name: Create project structure and files for MuPDF
+        run: |
+          mkdir -p app/src/main/cpp
+          
+          # MuPDF kaynak kodunu klonla
+          git clone https://git.ghostscript.com/mupdf.git app/src/main/cpp/mupdf_source
+
+          # app/build.gradle.kts dosyasını güncelle
+          cat << EOF >> app/build.gradle.kts
+          android {
+              externalNativeBuild {
+                  cmake {
+                      path = file("src/main/cpp/CMakeLists.txt")
+                  }
+              }
+          }
+          EOF
+
+          # CMakeLists.txt dosyasını oluştur
+          cat << EOF > app/src/main/cpp/CMakeLists.txt
+          cmake_minimum_required(VERSION 3.18.1)
+          
+          set(CMAKE_VERBOSE_MAKEFILE ON)
+
+          add_library(
+              mupdf_lib
+              STATIC
+              src/main/cpp/mupdf_source/source/mu_lib.c
+              src/main/cpp/mupdf_source/source/fitz/fitz.c
+              src/main/cpp/mupdf_source/source/pdf/pdf.c
+              src/main/cpp/mupdf_source/source/xps/xps.c
+          )
+          target_include_directories(
+              mupdf_lib
+              PUBLIC
+              src/main/cpp/mupdf_source/include
+          )
+          target_link_libraries(
+              mupdf_lib
+              log
+          )
+          
+          add_library(
+              pdfly_android
+              SHARED
+              src/main/cpp/pdfly_android.cpp
+          )
+          find_library(log-lib log)
+          target_link_libraries(
+              pdfly_android
+              mupdf_lib
+          )
+          EOF
+
+          # Ana Kotlin dosyasını güncelle
+          cat << EOF >> app/src/main/java/com/arvinapp/acgb/MainActivity.kt
+          companion object {
+              init {
+                  System.loadLibrary("pdfly_android")
+              }
+          }
+          EOF
+
+          # JNI (Java Native Interface) için C++ dosyasını oluştur
+          cat << EOF > app/src/main/cpp/pdfly_android.cpp
+          #include <jni.h>
+          #include <string>
+          
+          extern "C" JNIEXPORT jstring JNICALL
+          Java_com_arvinapp_acgb_MainActivity_stringFromJNI(
+                  JNIEnv* env,
+                  jobject /* this */) {
+              std::string hello = "Hello from C++";
+              return env->NewStringUTF(hello.c_str());
+          }
+          EOF
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+      
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFly-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
