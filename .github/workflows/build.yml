@@ -1,0 +1,80 @@
+name: Android Debug Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+          cmake-version: 3.22.1
+
+      - name: Create CMakeLists.txt and MuPDF Source
+        run: |
+          # MuPDF kaynak kodunu klonla
+          git clone https://git.ghostscript.com/mupdf.git app/src/main/cpp/mupdf_source
+
+          # CMakeLists.txt dosyasını oluştur
+          cat << EOF > app/src/main/cpp/CMakeLists.txt
+          cmake_minimum_required(VERSION 3.18.1)
+          
+          set(CMAKE_VERBOSE_MAKEFILE ON)
+
+          add_library(
+              mupdf_lib
+              STATIC
+              src/main/cpp/mupdf_source/source/mu_lib.c
+              src/main/cpp/mupdf_source/source/fitz/fitz.c
+              src/main/cpp/mupdf_source/source/pdf/pdf.c
+              src/main/cpp/mupdf_source/source/xps/xps.c
+          )
+          target_include_directories(
+              mupdf_lib
+              PUBLIC
+              src/main/cpp/mupdf_source/include
+          )
+          target_link_libraries(
+              mupdf_lib
+              log
+          )
+          
+          add_library(
+              pdfnative
+              SHARED
+              src/main/cpp/PdfNative.cpp
+          )
+          find_library(log-lib log)
+          target_link_libraries(
+              pdfnative
+              mupdf_lib
+          )
+          EOF
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+      
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFly-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
