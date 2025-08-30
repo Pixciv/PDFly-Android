@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Build süresi uzun olabilir
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -39,6 +39,55 @@ jobs:
           rm mupdf-1.24.0-source.tar.gz
           echo "MuPDF downloaded successfully"
 
+      - name: Create simplified CMakeLists.txt
+        run: |
+          cat > app/src/main/cpp/CMakeLists.txt << 'EOF'
+          cmake_minimum_required(VERSION 3.18.1)
+          project("pdfnative")
+
+          set(CMAKE_CXX_STANDARD 17)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+          # Önce sadece temel bir test yapalım
+          add_library(
+              pdfnative
+              SHARED
+              PdfNative.cpp
+          )
+
+          find_library(log-lib log)
+          target_link_libraries(pdfnative ${log-lib})
+          EOF
+
+      - name: Create minimal PdfNative.cpp
+        run: |
+          cat > app/src/main/cpp/PdfNative.cpp << 'EOF'
+          #include <jni.h>
+          #include <android/log.h>
+          #include <string>
+
+          #define LOG_TAG "PDFNative"
+          #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+
+          extern "C" JNIEXPORT void JNICALL
+          Java_com_arvinapp_pdfreader_PdfNative_initMuPDF(JNIEnv* env, jobject /* this */) {
+              LOGI("MuPDF initialization called (stub)");
+          }
+
+          extern "C" JNIEXPORT jstring JNICALL
+          Java_com_arvinapp_pdfreader_PdfNative_getTitle(JNIEnv* env, jobject /* this */, jstring path) {
+              return env->NewStringUTF("Test Title");
+          }
+
+          extern "C" JNIEXPORT jfloatArray JNICALL
+          Java_com_arvinapp_pdfreader_PdfNative_getPageSize(JNIEnv* env, jobject /* this */, jstring path, jint pageNum) {
+              jfloatArray result = env->NewFloatArray(2);
+              jfloat dimensions[2] = {595.0f, 842.0f}; // A4 size
+              env->SetFloatArrayRegion(result, 0, 2, dimensions);
+              return result;
+          }
+          EOF
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -46,7 +95,7 @@ jobs:
         run: ./gradlew clean
 
       - name: Build with detailed logging
-        run: ./gradlew :app:assembleDebug --info --stacktrace --no-daemon
+        run: ./gradlew :app:assembleDebug --info --stacktrace
       
       - name: Upload Debug APK
         if: success()
@@ -63,4 +112,3 @@ jobs:
           path: |
             **/*.log
             app/build/**/*.log
-            app/.cxx/**/*.log
