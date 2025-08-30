@@ -10,9 +10,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // MuPDF'yi başlat
+        PdfNative.initMuPDF()
+
         val textView = TextView(this).apply {
-            text = "PDF Reader"
-            textSize = 54f
+            text = "PDF Reader with MuPDF\n\nNative library loaded successfully!"
+            textSize = 24f
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
